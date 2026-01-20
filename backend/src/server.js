@@ -59,8 +59,22 @@ app.get('/api/health', (req, res) => {
   res.json({
     status: 'OK',
     timestamp: new Date().toISOString(),
-    service: 'ClimateGuard API'
+    service: 'ClimateGuard API',
+    dbConnected
   });
+});
+
+// Manual data fetch trigger
+app.get('/api/fetch-data', async (req, res) => {
+  if (!dbConnected) {
+    return res.status(503).json({ error: 'Database not connected' });
+  }
+  try {
+    await fetchExternalData();
+    res.json({ message: 'Data fetch completed', timestamp: new Date().toISOString() });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
 });
 
 // Dashboard summary endpoint
@@ -128,11 +142,15 @@ cron.schedule('0 * * * *', async () => {
 const startServer = async () => {
   await connectDB();
 
-  app.listen(PORT, () => {
+  app.listen(PORT, async () => {
     logger.info(`ClimateGuard API running on port ${PORT}`);
     logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
     if (!dbConnected) {
       logger.info('Running in DEMO MODE - API returns sample data');
+    } else {
+      // Fetch data on startup
+      logger.info('Fetching initial data...');
+      await fetchExternalData();
     }
   });
 };
