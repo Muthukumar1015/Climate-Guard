@@ -8,7 +8,7 @@ const heatwaveDataSchema = new mongoose.Schema({
   },
   state: {
     type: String,
-    required: true
+    default: ''
   },
   coordinates: {
     lat: { type: Number, required: true },
