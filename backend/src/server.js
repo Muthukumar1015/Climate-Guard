@@ -81,18 +81,39 @@ app.get('/api/fetch-data', async (req, res) => {
 app.get('/api/dashboard/:city', async (req, res) => {
   try {
     const { city } = req.params;
-    // This would aggregate data from all modules
+
+    // Import models dynamically to avoid circular dependencies
+    const HeatwaveData = (await import('./models/HeatwaveData.model.js')).default;
+    const AirQuality = (await import('./models/AirQuality.model.js')).default;
+    const Alert = (await import('./models/Alert.model.js')).default;
+
+    // Fetch latest data from database
+    const [heatwaveData, airQualityData, activeAlerts] = await Promise.all([
+      HeatwaveData.findOne({ city: new RegExp(city, 'i') }).sort({ recordedAt: -1 }),
+      AirQuality.findOne({ city: new RegExp(city, 'i') }).sort({ recordedAt: -1 }),
+      Alert.countDocuments({ city: new RegExp(city, 'i'), isActive: true })
+    ]);
+
     res.json({
       city,
       timestamp: new Date().toISOString(),
       summary: {
-        heatwave: { status: 'normal', temperature: null },
-        flood: { riskLevel: 'low', activeAlerts: 0 },
-        airQuality: { aqi: null, category: 'unknown' },
+        heatwave: {
+          status: heatwaveData?.alertLevel || 'normal',
+          temperature: heatwaveData?.temperature?.current || null,
+          heatIndex: heatwaveData?.heatIndex || null,
+          humidity: heatwaveData?.humidity || null
+        },
+        flood: { riskLevel: 'low', activeAlerts: activeAlerts },
+        airQuality: {
+          aqi: airQualityData?.aqi?.value || null,
+          category: airQualityData?.aqi?.category || 'unknown'
+        },
         waterQuality: { index: null, safe: true }
       }
     });
   } catch (error) {
+    logger.error('Dashboard error:', error.message);
     res.status(500).json({ error: 'Failed to fetch dashboard data' });
   }
 });
