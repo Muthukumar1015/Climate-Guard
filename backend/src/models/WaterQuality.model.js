@@ -8,7 +8,7 @@ const waterQualitySchema = new mongoose.Schema({
   },
   state: {
     type: String,
-    required: true
+    default: ''
   },
   waterBody: {
     name: String,
@@ -18,8 +18,8 @@ const waterQualitySchema = new mongoose.Schema({
     }
   },
   coordinates: {
-    lat: { type: Number, required: true },
-    lng: { type: Number, required: true }
+    lat: { type: Number },
+    lng: { type: Number }
   },
   wqi: {
     value: Number,  // Water Quality Index

@@ -133,6 +133,35 @@ async function fetchLiveWeather(city, lat, lng) {
   }
 }
 
+// Generate water quality data for dashboard
+function generateWaterQuality(city) {
+  const hash = city.split('').reduce((a, c) => a + c.charCodeAt(0), 0);
+  const rand = (min, max, seed = 0) => {
+    const x = Math.sin(hash + seed) * 10000;
+    return min + (x - Math.floor(x)) * (max - min);
+  };
+
+  const ph = rand(6.8, 8.2, 1);
+  const dissolvedOxygen = rand(5, 8, 2);
+  const bod = rand(1, 4, 3);
+  const turbidity = rand(1, 8, 4);
+  const totalColiform = rand(10, 80, 5);
+
+  let wqiValue = 0;
+  wqiValue += ph >= 6.5 && ph <= 8.5 ? 10 : 20;
+  wqiValue += dissolvedOxygen >= 6 ? 10 : 15;
+  wqiValue += bod <= 3 ? 10 : 20;
+  wqiValue += turbidity <= 5 ? 10 : 15;
+  wqiValue += totalColiform <= 50 ? 10 : 20;
+
+  let category = 'excellent';
+  if (wqiValue > 75) category = 'poor';
+  else if (wqiValue > 50) category = 'fair';
+  else if (wqiValue > 25) category = 'good';
+
+  return { wqi: Math.round(wqiValue), category, safe: wqiValue <= 50 };
+}
+
 // Dashboard summary endpoint
 app.get('/api/dashboard/:city', async (req, res) => {
   try {
@@ -142,12 +171,14 @@ app.get('/api/dashboard/:city', async (req, res) => {
     // Import models dynamically to avoid circular dependencies
     const HeatwaveData = (await import('./models/HeatwaveData.model.js')).default;
     const AirQuality = (await import('./models/AirQuality.model.js')).default;
+    const WaterQuality = (await import('./models/WaterQuality.model.js')).default;
     const Alert = (await import('./models/Alert.model.js')).default;
 
     // Fetch latest data from database
-    let [heatwaveData, airQualityData, activeAlerts] = await Promise.all([
+    let [heatwaveData, airQualityData, waterQualityData, activeAlerts] = await Promise.all([
       HeatwaveData.findOne({ city: new RegExp(city, 'i') }).sort({ recordedAt: -1 }),
       AirQuality.findOne({ city: new RegExp(city, 'i') }).sort({ recordedAt: -1 }),
+      WaterQuality.findOne({ city: new RegExp(city, 'i') }).sort({ recordedAt: -1 }),
       Alert.countDocuments({ city: new RegExp(city, 'i'), isActive: true })
     ]);
 
@@ -155,6 +186,12 @@ app.get('/api/dashboard/:city', async (req, res) => {
     let liveWeather = null;
     if (!heatwaveData || !heatwaveData.temperature?.current) {
       liveWeather = await fetchLiveWeather(city, lat, lng);
+    }
+
+    // If no water quality data, generate simulated data
+    let waterData = null;
+    if (!waterQualityData) {
+      waterData = generateWaterQuality(city);
     }
 
     res.json({
@@ -172,7 +209,11 @@ app.get('/api/dashboard/:city', async (req, res) => {
           aqi: airQualityData?.aqi?.value || null,
           category: airQualityData?.aqi?.category || 'unknown'
         },
-        waterQuality: { index: null, safe: true }
+        waterQuality: {
+          index: waterQualityData?.wqi?.value || waterData?.wqi || null,
+          category: waterQualityData?.wqi?.category || waterData?.category || 'unknown',
+          safe: waterQualityData?.isSafeForDrinking ?? waterData?.safe ?? true
+        }
       }
     });
   } catch (error) {

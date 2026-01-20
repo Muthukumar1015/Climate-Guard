@@ -165,12 +165,16 @@ export default function Dashboard() {
           status={data?.summary?.waterQuality?.safe ? 'safe' : 'check'}
           metrics={[
             {
-              label: 'Status',
-              value: data?.summary?.waterQuality?.safe ? 'Safe' : 'Check Quality'
-            },
-            {
               label: 'WQI',
               value: data?.summary?.waterQuality?.index || '--'
+            },
+            {
+              label: 'Status',
+              value: data?.summary?.waterQuality?.category
+                ? data.summary.waterQuality.category.charAt(0).toUpperCase() +
+                  data.summary.waterQuality.category.slice(1).replace('_', ' ')
+                : (data?.summary?.waterQuality?.safe ? 'Safe' : 'Check'),
+              highlight: !data?.summary?.waterQuality?.safe
             }
           ]}
         />
