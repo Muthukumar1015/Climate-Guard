@@ -307,14 +307,21 @@ export const getAllLocations = () => {
 export const searchLocations = (query) => {
   if (!query || query.length < 2) return [];
   const allLocations = getAllLocations();
-  const lowerQuery = query.toLowerCase();
+  const lowerQuery = query.toLowerCase().replace(/\s+/g, '');
+
   return allLocations
-    .filter(loc =>
-      loc.name.toLowerCase().includes(lowerQuery) ||
-      loc.state.toLowerCase().includes(lowerQuery) ||
-      loc.fullName.toLowerCase().includes(lowerQuery)
-    )
-    .slice(0, 10);
+    .filter(loc => {
+      const nameNoSpace = loc.name.toLowerCase().replace(/\s+/g, '');
+      const stateNoSpace = loc.state.toLowerCase().replace(/\s+/g, '');
+      const fullNameNoSpace = loc.fullName.toLowerCase().replace(/\s+/g, '');
+
+      return nameNoSpace.includes(lowerQuery) ||
+             stateNoSpace.includes(lowerQuery) ||
+             fullNameNoSpace.includes(lowerQuery) ||
+             loc.name.toLowerCase().includes(query.toLowerCase()) ||
+             loc.state.toLowerCase().includes(query.toLowerCase());
+    })
+    .slice(0, 15); // Show more results for state searches
 };
 
 // Get location by name

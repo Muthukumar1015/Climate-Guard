@@ -1,16 +1,112 @@
 import express from 'express';
+import axios from 'axios';
 import HeatwaveData from '../models/HeatwaveData.model.js';
 import { authenticateToken, requireRole } from '../middleware/auth.middleware.js';
 
 const router = express.Router();
 
+// Helper function to fetch weather from OpenWeather
+async function fetchWeatherForLocation(city, lat, lng) {
+  const apiKey = process.env.OPENWEATHER_API_KEY;
+  if (!apiKey) return null;
+
+  try {
+    const response = await axios.get(
+      `https://api.openweathermap.org/data/2.5/weather`,
+      {
+        params: { lat, lon: lng, appid: apiKey, units: 'metric' }
+      }
+    );
+    return response.data;
+  } catch (error) {
+    console.error('OpenWeather API error:', error.message);
+    return null;
+  }
+}
+
+// Calculate heat index
+function calculateHeatIndex(temp, humidity) {
+  if (temp < 27) return temp;
+  const c1 = -8.78469475556, c2 = 1.61139411, c3 = 2.33854883889;
+  const c4 = -0.14611605, c5 = -0.012308094, c6 = -0.0164248277778;
+  const c7 = 0.002211732, c8 = 0.00072546, c9 = -0.000003582;
+  const heatIndex = c1 + (c2 * temp) + (c3 * humidity) + (c4 * temp * humidity) +
+    (c5 * temp * temp) + (c6 * humidity * humidity) + (c7 * temp * temp * humidity) +
+    (c8 * temp * humidity * humidity) + (c9 * temp * temp * humidity * humidity);
+  return Math.round(heatIndex * 10) / 10;
+}
+
+// Get alert level
+function getAlertLevel(temp, heatIndex) {
+  if (temp >= 45 || heatIndex >= 52) return 'red';
+  if (temp >= 40 || heatIndex >= 45) return 'orange';
+  if (temp >= 37 || heatIndex >= 40) return 'yellow';
+  return 'green';
+}
+
 // Get current heatwave data for a city
 router.get('/current/:city', async (req, res) => {
   try {
     const { city } = req.params;
+    const { lat, lng } = req.query;
 
-    const data = await HeatwaveData.findOne({ city: new RegExp(city, 'i') })
+    // First try to find in database
+    let data = await HeatwaveData.findOne({ city: new RegExp(city, 'i') })
       .sort({ recordedAt: -1 });
+
+    // If no data or data is old (> 1 hour), fetch fresh data
+    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+    if (!data || data.recordedAt < oneHourAgo) {
+      // Use provided coordinates or try to geocode
+      let latitude = lat ? parseFloat(lat) : null;
+      let longitude = lng ? parseFloat(lng) : null;
+
+      if (!latitude || !longitude) {
+        // Try to geocode the city
+        const apiKey = process.env.OPENWEATHER_API_KEY;
+        if (apiKey) {
+          try {
+            const geoRes = await axios.get(
+              `https://api.openweathermap.org/geo/1.0/direct`,
+              { params: { q: `${city},IN`, limit: 1, appid: apiKey } }
+            );
+            if (geoRes.data && geoRes.data[0]) {
+              latitude = geoRes.data[0].lat;
+              longitude = geoRes.data[0].lon;
+            }
+          } catch (e) {
+            console.error('Geocoding error:', e.message);
+          }
+        }
+      }
+
+      if (latitude && longitude) {
+        const weatherData = await fetchWeatherForLocation(city, latitude, longitude);
+        if (weatherData) {
+          const temp = weatherData.main.temp;
+          const humidity = weatherData.main.humidity;
+          const heatIndex = calculateHeatIndex(temp, humidity);
+          const alertLevel = getAlertLevel(temp, heatIndex);
+
+          data = await HeatwaveData.create({
+            city: city,
+            state: '',
+            coordinates: { lat: latitude, lng: longitude },
+            temperature: {
+              current: temp,
+              feelsLike: weatherData.main.feels_like,
+              min: weatherData.main.temp_min,
+              max: weatherData.main.temp_max
+            },
+            heatIndex,
+            humidity,
+            alertLevel,
+            source: 'OpenWeather',
+            recordedAt: new Date()
+          });
+        }
+      }
+    }
 
     if (!data) {
       return res.status(404).json({ error: 'No data available for this city' });
