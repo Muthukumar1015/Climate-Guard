@@ -5,6 +5,7 @@ import rateLimit from 'express-rate-limit';
 import dotenv from 'dotenv';
 import mongoose from 'mongoose';
 import cron from 'node-cron';
+import axios from 'axios';
 
 // Import routes
 import authRoutes from './routes/auth.routes.js';
@@ -77,10 +78,66 @@ app.get('/api/fetch-data', async (req, res) => {
   }
 });
 
+// Helper: Fetch weather from OpenWeather
+async function fetchLiveWeather(city, lat, lng) {
+  const apiKey = process.env.OPENWEATHER_API_KEY;
+  if (!apiKey) return null;
+
+  try {
+    // Get coordinates if not provided
+    let latitude = lat, longitude = lng;
+    if (!latitude || !longitude) {
+      const geoRes = await axios.get(
+        `https://api.openweathermap.org/geo/1.0/direct`,
+        { params: { q: `${city},IN`, limit: 1, appid: apiKey } }
+      );
+      if (geoRes.data && geoRes.data[0]) {
+        latitude = geoRes.data[0].lat;
+        longitude = geoRes.data[0].lon;
+      }
+    }
+
+    if (!latitude || !longitude) return null;
+
+    const weatherRes = await axios.get(
+      `https://api.openweathermap.org/data/2.5/weather`,
+      { params: { lat: latitude, lon: longitude, appid: apiKey, units: 'metric' } }
+    );
+
+    const data = weatherRes.data;
+    const temp = data.main.temp;
+    const humidity = data.main.humidity;
+
+    // Calculate heat index
+    let heatIndex = temp;
+    if (temp >= 27) {
+      const c1 = -8.78469475556, c2 = 1.61139411, c3 = 2.33854883889;
+      const c4 = -0.14611605, c5 = -0.012308094, c6 = -0.0164248277778;
+      const c7 = 0.002211732, c8 = 0.00072546, c9 = -0.000003582;
+      heatIndex = c1 + (c2 * temp) + (c3 * humidity) + (c4 * temp * humidity) +
+        (c5 * temp * temp) + (c6 * humidity * humidity) + (c7 * temp * temp * humidity) +
+        (c8 * temp * humidity * humidity) + (c9 * temp * temp * humidity * humidity);
+      heatIndex = Math.round(heatIndex * 10) / 10;
+    }
+
+    // Get alert level
+    let alertLevel = 'green';
+    if (temp >= 45 || heatIndex >= 52) alertLevel = 'red';
+    else if (temp >= 40 || heatIndex >= 45) alertLevel = 'orange';
+    else if (temp >= 37 || heatIndex >= 40) alertLevel = 'yellow';
+
+    return { temp, humidity, heatIndex, alertLevel, feelsLike: data.main.feels_like };
+  } catch (error) {
+    console.error('Live weather fetch error:', error.message);
+    return null;
+  }
+}
+
 // Dashboard summary endpoint
 app.get('/api/dashboard/:city', async (req, res) => {
   try {
     const { city } = req.params;
+    const { lat, lng } = req.query;
 
     // Import models dynamically to avoid circular dependencies
     const HeatwaveData = (await import('./models/HeatwaveData.model.js')).default;
@@ -88,21 +145,27 @@ app.get('/api/dashboard/:city', async (req, res) => {
     const Alert = (await import('./models/Alert.model.js')).default;
 
     // Fetch latest data from database
-    const [heatwaveData, airQualityData, activeAlerts] = await Promise.all([
+    let [heatwaveData, airQualityData, activeAlerts] = await Promise.all([
       HeatwaveData.findOne({ city: new RegExp(city, 'i') }).sort({ recordedAt: -1 }),
       AirQuality.findOne({ city: new RegExp(city, 'i') }).sort({ recordedAt: -1 }),
       Alert.countDocuments({ city: new RegExp(city, 'i'), isActive: true })
     ]);
+
+    // If no heatwave data, fetch live from OpenWeather
+    let liveWeather = null;
+    if (!heatwaveData || !heatwaveData.temperature?.current) {
+      liveWeather = await fetchLiveWeather(city, lat, lng);
+    }
 
     res.json({
       city,
       timestamp: new Date().toISOString(),
       summary: {
         heatwave: {
-          status: heatwaveData?.alertLevel || 'normal',
-          temperature: heatwaveData?.temperature?.current || null,
-          heatIndex: heatwaveData?.heatIndex || null,
-          humidity: heatwaveData?.humidity || null
+          status: heatwaveData?.alertLevel || liveWeather?.alertLevel || 'normal',
+          temperature: heatwaveData?.temperature?.current || liveWeather?.temp || null,
+          heatIndex: heatwaveData?.heatIndex || liveWeather?.heatIndex || null,
+          humidity: heatwaveData?.humidity || liveWeather?.humidity || null
         },
         flood: { riskLevel: 'low', activeAlerts: activeAlerts },
         airQuality: {

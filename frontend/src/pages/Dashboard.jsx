@@ -14,7 +14,7 @@ import { useLocation } from '../context/LocationContext';
 import { dashboardAPI, alertsAPI, heatwaveAPI, airQualityAPI } from '../services/api';
 
 export default function Dashboard() {
-  const { city } = useLocation();
+  const { city, locationData } = useLocation();
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState(null);
   const [alerts, setAlerts] = useState([]);
@@ -22,7 +22,7 @@ export default function Dashboard() {
 
   useEffect(() => {
     fetchDashboardData();
-  }, [city]);
+  }, [city, locationData]);
 
   const fetchDashboardData = async () => {
     setLoading(true);
@@ -30,7 +30,7 @@ export default function Dashboard() {
 
     try {
       const [dashboardRes, alertsRes] = await Promise.allSettled([
-        dashboardAPI.getSummary(city),
+        dashboardAPI.getSummary(city, locationData?.lat, locationData?.lng),
         alertsAPI.getSummary(city)
       ]);
 

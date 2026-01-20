@@ -88,7 +88,7 @@ export const reportsAPI = {
 };
 
 export const dashboardAPI = {
-  getSummary: (city) => api.get(`/dashboard/${city}`)
+  getSummary: (city, lat, lng) => api.get(`/dashboard/${city}`, { params: { lat, lng } })
 };
 
 export default api;
